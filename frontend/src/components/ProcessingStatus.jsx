@@ -1,8 +1,8 @@
 import React from 'react';
 import { motion } from 'framer-motion';
-import { Loader2, CheckCircle, Video } from 'lucide-react';
+import { Loader2, CheckCircle, Video, Sliders } from 'lucide-react';
 
-const ProcessingStatus = ({ status, errorMessage, fileName }) => {
+const ProcessingStatus = ({ status, errorMessage, fileName, onOpenEditor, onOpenExportModal, onReset }) => {
   if (status === 'idle') return null;
 
   if (status === 'error') {
@@ -21,8 +21,8 @@ const ProcessingStatus = ({ status, errorMessage, fileName }) => {
   }
 
   if (status === 'complete') {
-      const downloadUrl = fileName ? `http://127.0.0.1:8000/api/download/${fileName}` : '#';
-      const streamUrl = fileName ? `http://127.0.0.1:8000/api/stream/${fileName}` : '#';
+      const downloadUrl = fileName ? `http://localhost:8000/api/download/${fileName}` : '#';
+      const streamUrl = fileName ? `http://localhost:8000/api/stream/${fileName}` : '#';
 
       return (
         <motion.div 
@@ -49,15 +49,44 @@ const ProcessingStatus = ({ status, errorMessage, fileName }) => {
             </video>
           </div>
 
-          <a href={downloadUrl} download className="flex items-center justify-center gap-2 mx-auto bg-emerald-500 hover:bg-emerald-600 text-white px-8 py-4 rounded-xl font-bold shadow-lg shadow-emerald-500/20 transition-all transform hover:scale-[1.02] active:scale-[0.98] w-fit">
-            <Video className="w-6 h-6" />
-            Download Final MP4
-          </a>
+          <div className="flex flex-wrap items-center justify-center gap-4">
+            {onOpenEditor && (
+              <button 
+                onClick={onOpenEditor}
+                className="flex items-center justify-center gap-2 bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white px-6 py-3.5 rounded-xl font-bold shadow-lg shadow-indigo-500/20 transition-all transform hover:scale-[1.02] active:scale-[0.98]"
+              >
+                Open Subtitle Editor
+              </button>
+            )}
+
+            {onOpenExportModal && (
+              <button 
+                onClick={onOpenExportModal}
+                className="flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-700 border border-slate-600 text-white px-6 py-3.5 rounded-xl font-bold shadow-lg transition-all transform hover:scale-[1.02] active:scale-[0.98]"
+              >
+                <Sliders className="w-5 h-5 text-yellow-400" />
+                Custom Export & Lip-Sync
+              </button>
+            )}
+
+            {onReset && (
+              <button 
+                onClick={onReset}
+                className="flex items-center justify-center gap-2 bg-slate-800/80 hover:bg-slate-700 border border-slate-700 text-slate-300 px-6 py-3.5 rounded-xl font-bold transition-all transform hover:scale-[1.02] active:scale-[0.98]"
+              >
+                Translate Another Video
+              </button>
+            )}
+            
+            <a href={downloadUrl} download className="flex items-center justify-center gap-2 bg-emerald-500 hover:bg-emerald-600 text-white px-6 py-3.5 rounded-xl font-bold shadow-lg shadow-emerald-500/20 transition-all transform hover:scale-[1.02] active:scale-[0.98]">
+              <Video className="w-5 h-5" />
+              Download MP4
+            </a>
+          </div>
         </motion.div>
       );
   }
   
-  // Processing state
   return (
     <motion.div 
       initial={{ opacity: 0, y: 10 }}
@@ -75,13 +104,12 @@ const ProcessingStatus = ({ status, errorMessage, fileName }) => {
           </div>
         </div>
         
-        {/* Fake progress bar since backend doesn't stream status yet */}
         <div className="w-full bg-slate-800 rounded-full h-3 mb-4 overflow-hidden border border-slate-700/50 shadow-inner">
           <motion.div 
             className="bg-gradient-to-r from-blue-500 to-emerald-400 h-full rounded-full relative overflow-hidden"
             initial={{ width: "2%" }}
             animate={{ width: "98%" }}
-            transition={{ duration: 60, ease: "easeOut" }} // Fake estimated time
+            transition={{ duration: 60, ease: "easeOut" }}
           >
             <div className="absolute inset-0 bg-white/20 w-full h-full animate-[shimmer_2s_infinite]"></div>
           </motion.div>

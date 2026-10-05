@@ -18,3 +18,5 @@ Thumbs.db
 
 # Project-specific
 sample_video.mp4
+scratch/
+backend/scratch_test_ocr.py

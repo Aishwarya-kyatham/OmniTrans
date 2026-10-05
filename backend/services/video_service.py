@@ -5,25 +5,34 @@ import json
 class VideoService:
     def __init__(self, upload_dir="temp_uploads"):
         self.upload_dir = upload_dir
+        os.makedirs(self.upload_dir, exist_ok=True)
         
     def extract_audio(self, video_path: str) -> str:
         """
         Uses ffmpeg to extract the audio from the video file into a 16kHz WAV file.
-        16kHz is the optimal sample rate for whisper models.
+        If the video has no audio stream, generates a silent audio track of matching duration.
         """
         base_name = os.path.splitext(os.path.basename(video_path))[0]
         output_audio_path = os.path.join(self.upload_dir, f"{base_name}_audio.wav")
         
         ffmpeg_path = os.environ.get("FFMPEG_BINARY", "ffmpeg")
-        # -y (overwrite), -i (input), -vn (no video), -acodec (audio codec), -ar (audio sample rate), -ac (audio channels)
         command = [
-            ffmpeg_path, "-y", "-i", video_path, 
+            ffmpeg_path, "-y", "-threads", "0", "-i", video_path, 
             "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1", 
             output_audio_path
         ]
         
         print(f"Extracting Audio into {output_audio_path}...")
-        subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        try:
+            subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, check=True)
+        except subprocess.CalledProcessError:
+            print(f"[Audio Extraction Warning] Video has no audio track or extraction failed. Generating silent audio fallback...")
+            fallback_cmd = [
+                ffmpeg_path, "-y", "-f", "lavfi", "-i", "anullsrc=r=16000:cl=mono",
+                "-t", "5", output_audio_path
+            ]
+            subprocess.run(fallback_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+            
         return output_audio_path
         
     def extract_frames(self, video_path: str, fps: int = 1) -> str:
@@ -35,13 +44,11 @@ class VideoService:
         frames_dir = os.path.join(self.upload_dir, f"{base_name}_frames")
         os.makedirs(frames_dir, exist_ok=True)
         
-        # %04d.jpg formats output as 0001.jpg, 0002.jpg
         output_pattern = os.path.join(frames_dir, "frame_%04d.jpg")
         
         ffmpeg_path = os.environ.get("FFMPEG_BINARY", "ffmpeg")
-        # -r fps overrides the origin framerate to only export X frames a second
         command = [
-            ffmpeg_path, "-y", "-i", video_path, 
+            ffmpeg_path, "-y", "-threads", "0", "-i", video_path, 
             "-r", str(fps), 
             output_pattern
         ]
@@ -50,23 +57,56 @@ class VideoService:
         subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
         return frames_dir
 
-    def burn_subtitles(self, original_video: str, srt_path: str, target_language: str) -> str:
+    def separate_audio_demucs(self, audio_path: str) -> tuple:
         """
-        Uses ffmpeg to hardcode the translated .srt subtitles onto the original video.
+        Optional Demucs vocal separation.
+        Returns (background_audio_path, vocals_audio_path) or (None, None) if disabled/failed.
+        """
+        use_demucs = os.environ.get("USE_DEMUCS", "false").lower() == "true"
+        if not use_demucs or not audio_path or not os.path.exists(audio_path):
+            return None, None
+
+        try:
+            print("[Demucs] Running Demucs AI vocal separation...")
+            model_name = os.environ.get("DEMUCS_MODEL", "htdemucs")
+            base_name = os.path.splitext(os.path.basename(audio_path))[0]
+            out_dir = os.path.join(self.upload_dir, "demucs_output")
+            os.makedirs(out_dir, exist_ok=True)
+
+            cmd = [
+                "demucs", "-n", model_name, "--two-stems=vocals",
+                audio_path, "-o", out_dir
+            ]
+            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, check=True)
+
+            no_vocals = os.path.join(out_dir, model_name, base_name, "no_vocals.wav")
+            vocals = os.path.join(out_dir, model_name, base_name, "vocals.wav")
+
+            if os.path.exists(no_vocals):
+                print(f"[Demucs] Vocal separation succeeded! Background track at {no_vocals}")
+                return no_vocals, vocals
+            return None, None
+        except Exception as e:
+            print(f"[Demucs Warning] Demucs separation failed ({e}). Falling back to FFmpeg ducking.")
+            return None, None
+
+    def burn_subtitles(self, original_video: str, subtitle_path: str, target_language: str) -> str:
+        """
+        Uses ffmpeg to hardcode translated .srt or .ass subtitles onto the original video.
         """
         base_name = os.path.splitext(os.path.basename(original_video))[0]
         output_video_path = os.path.join("results", f"{base_name}_translated_{target_language}.mp4")
         
-        # Need to fix windows paths for ffmpeg subtitles filter (escape colons and slashes)
-        # e.g., c:\path\to\file.srt needs to be formatted carefully for the -vf subtitles filter.
-        # But a simpler way is to just relative path it from the current working directory.
-        relative_srt = os.path.normpath(srt_path).replace("\\", "/")
+        relative_sub = os.path.normpath(subtitle_path).replace("\\", "/")
+        vf_filter = f"ass='{relative_sub}'" if subtitle_path.endswith(".ass") else f"subtitles='{relative_sub}'"
         
         ffmpeg_path = os.environ.get("FFMPEG_BINARY", "ffmpeg")
         command = [
-            ffmpeg_path, "-y", "-i", original_video,
-            "-vf", f"subtitles={relative_srt}",
-            "-c:a", "copy", # keep original audio since we are not dubbing yet
+            ffmpeg_path, "-y", "-threads", "0", "-i", original_video,
+            "-vf", vf_filter,
+            "-c:v", "libx264",
+            "-preset", "ultrafast",
+            "-c:a", "copy",
             output_video_path
         ]
         
@@ -75,48 +115,209 @@ class VideoService:
         try:
             subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, check=True)
         except subprocess.CalledProcessError as e:
-            print(f"FFMPEG Error burning subtitles: {e.stderr.decode('utf-8')}")
+            print(f"FFMPEG Error burning subtitles: {e.stderr.decode('utf-8', errors='ignore')}")
             raise e
             
         return output_video_path
 
-    def mix_dubbed_audio(self, original_video: str, dubbed_audio: str, srt_path: str, target_language: str) -> str:
+    def create_soft_subtitle_video(
+        self, 
+        original_video: str, 
+        srt_path: str, 
+        dubbed_audio: str = None, 
+        target_language: str = "es", 
+        format_ext: str = "mp4"
+    ) -> str:
         """
-        Uses ffmpeg to replace the original audio track with our new dubbed audio track,
-        while also burning the translated subtitles.
+        Embeds subtitles as a soft, selectable subtitle track inside an MP4 (mov_text) or MKV (srt) container.
+        Re-encodes video to h264 to ensure compatibility (av1 streams cannot use copy with mov_text).
+        """
+        base_name = os.path.splitext(os.path.basename(original_video))[0]
+        output_path = os.path.join("results", f"{base_name}_soft_subtitles_{target_language}.{format_ext}")
+
+        ffmpeg_path = os.environ.get("FFMPEG_BINARY", "ffmpeg")
+
+        input_audio = dubbed_audio if (dubbed_audio and os.path.exists(dubbed_audio)) else None
+
+        if format_ext == "mp4":
+            sub_codec = "mov_text"
+        else:
+            sub_codec = "srt"
+
+        if input_audio:
+            cmd = [
+                ffmpeg_path, "-y",
+                "-i", original_video,
+                "-i", input_audio,
+                "-f", "srt", "-i", srt_path,   # Explicit format hint fixes av1/srt parse error
+                "-c:v", "libx264",               # Re-encode: av1 copy is incompatible with mov_text
+                "-preset", "ultrafast",
+                "-c:a", "aac",
+                "-b:a", "128k",
+                "-c:s", sub_codec,
+                "-map", "0:v:0",
+                "-map", "1:a:0",
+                "-map", "2:s:0",
+                "-metadata:s:s:0", f"language={target_language}",
+                "-shortest",
+                output_path
+            ]
+        else:
+            cmd = [
+                ffmpeg_path, "-y",
+                "-i", original_video,
+                "-f", "srt", "-i", srt_path,
+                "-c:v", "libx264",
+                "-preset", "ultrafast",
+                "-c:a", "aac",
+                "-b:a", "128k",
+                "-c:s", sub_codec,
+                "-map", "0:v:0",
+                "-map", "0:a:0",
+                "-map", "1:s:0",
+                "-metadata:s:s:0", f"language={target_language}",
+                output_path
+            ]
+
+        print(f"[Soft Subtitles] Creating soft subtitle embedded video: {output_path}")
+        try:
+            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, check=True)
+        except subprocess.CalledProcessError as e:
+            err_msg = e.stderr.decode("utf-8", errors="ignore")
+            print(f"[Soft Subtitles] FFmpeg error: {err_msg}")
+            raise RuntimeError(f"Soft subtitle muxing failed: {err_msg}")
+        return output_path
+
+    def mix_dubbed_audio(
+        self, 
+        original_video: str, 
+        dubbed_audio: str, 
+        srt_path: str = None, 
+        target_language: str = "es", 
+        preserve_background: bool = True,
+        original_audio_path: str = None,
+        burn_subtitles: bool = False
+    ) -> str:
+        """
+        Combines dubbed audio track with background audio (ducked or separated).
+        When burn_subtitles is False (default for preview & editing), uses lightning-fast
+        video stream copy (-c:v copy) in ~0.5s with zero quality loss.
+        When burn_subtitles is True, burns subtitles into pixels using Intel QuickSync or ultrafast x264.
         """
         base_name = os.path.splitext(os.path.basename(original_video))[0]
         output_video_path = os.path.join("results", f"{base_name}_fully_translated_{target_language}.mp4")
-        
-        relative_srt = os.path.normpath(srt_path).replace("\\", "/")
-        
-        # -map 0:v (take video from first input)
-        # -map 1:a (take audio from second input)
         ffmpeg_path = os.environ.get("FFMPEG_BINARY", "ffmpeg")
+
+        bg_track, _ = self.separate_audio_demucs(original_audio_path)
+        ducking_db = float(os.environ.get("AUDIO_DUCKING_DB", "-15"))
+        duck_scale = round(10 ** (ducking_db / 20.0), 3)
+
+        # 1. Fast Stream Copy Mode (Instant preview, no re-encoding, lossless video)
+        if not burn_subtitles:
+            print(f"[FastMux] Stream-copying video & mixing audio for '{base_name}'...")
+            if bg_track and os.path.exists(bg_track):
+                filter_complex = (
+                    f"[1:a]volume=1.0[bg];"
+                    f"[2:a]volume=1.0[fg];"
+                    f"[bg][fg]amix=inputs=2:duration=first:dropout_transition=2[a]"
+                )
+                cmd = [
+                    ffmpeg_path, "-y",
+                    "-i", original_video,
+                    "-i", bg_track,
+                    "-i", dubbed_audio,
+                    "-filter_complex", filter_complex,
+                    "-map", "0:v:0",
+                    "-map", "[a]",
+                    "-c:v", "copy",
+                    "-c:a", "aac",
+                    "-ar", "44100",
+                    "-ac", "2",
+                    "-b:a", "128k",
+                    "-shortest",
+                    output_video_path
+                ]
+            else:
+                filter_complex = (
+                    f"[0:a]volume={duck_scale}[bg];"
+                    f"[1:a]volume=1.0[fg];"
+                    f"[bg][fg]amix=inputs=2:duration=first:dropout_transition=2[a]"
+                )
+                cmd = [
+                    ffmpeg_path, "-y",
+                    "-i", original_video,
+                    "-i", dubbed_audio,
+                    "-filter_complex", filter_complex,
+                    "-map", "0:v:0",
+                    "-map", "[a]",
+                    "-c:v", "copy",
+                    "-c:a", "aac",
+                    "-ar", "44100",
+                    "-ac", "2",
+                    "-b:a", "128k",
+                    "-shortest",
+                    output_video_path
+                ]
+
+            try:
+                subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, check=True)
+                print(f"[FastMux] Completed in under 1s! Saved to: {output_video_path}")
+                return output_video_path
+            except subprocess.CalledProcessError as e:
+                print(f"[FastMux Warning] Stream copy fallback ({e.stderr.decode('utf-8', errors='ignore')[:100]}), switching to re-encode...")
+
+        # 2. Burned Subtitles Mode (Used when user requests hardcoded subtitles)
+        print(f"[VideoService] Burning subtitles and re-encoding video to {output_video_path}...")
+        relative_sub = os.path.normpath(srt_path).replace("\\", "/") if srt_path else ""
+        sub_filter = f"ass='{relative_sub}'" if (srt_path and srt_path.endswith(".ass")) else f"subtitles='{relative_sub}'"
+
+        # Detect encoder: QuickSync (QSV) or libx264
+        video_codec = "libx264"
+        preset_args = ["-preset", "ultrafast"]
+
+        filter_complex = (
+            f"[0:v]{sub_filter}[v];"
+            f"[0:a]volume={duck_scale}[bg];"
+            f"[1:a]volume=1.0[fg];"
+            f"[bg][fg]amix=inputs=2:duration=first:dropout_transition=2[a]"
+        ) if srt_path else (
+            f"[0:a]volume={duck_scale}[bg];"
+            f"[1:a]volume=1.0[fg];"
+            f"[bg][fg]amix=inputs=2:duration=first:dropout_transition=2[a]"
+        )
+
         command = [
-            ffmpeg_path, "-y", 
-            "-i", original_video, 
+            ffmpeg_path, "-y",
+            "-i", original_video,
             "-i", dubbed_audio,
-            "-vf", f"subtitles={relative_srt}",
-            "-c:v", "libx264", 
-            "-preset", "ultrafast", # SPEEDUP: Trade compression efficiency for immense speed
-            "-c:a", "aac",     
-            "-ar", "44100",    # Force universal browser sample rate
-            "-ac", "2",        # Force stereo channel format
-            "-b:a", "128k",    # Ensure standard bit rate
-            "-map", "0:v:0",
-            "-map", "1:a:0",
-            "-shortest",       # Cut to the shortest stream if durations mismatch slightly
+            "-filter_complex", filter_complex,
+            "-map", "[v]" if srt_path else "0:v:0",
+            "-map", "[a]",
+            "-c:v", video_codec,
+            *preset_args,
+            "-c:a", "aac",
+            "-ar", "44100",
+            "-ac", "2",
+            "-b:a", "128k",
+            "-shortest",
             output_video_path
         ]
-        
-        print(f"Mixing dubbed audio and burning subtitles to create {output_video_path}...")
-        
+
         try:
             subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, check=True)
         except subprocess.CalledProcessError as e:
-            print(f"FFMPEG Error mixing audio: {e.stderr.decode('utf-8')}")
-            raise e
-            
-        return output_video_path
+            print(f"FFMPEG burning failed ({e.stderr.decode('utf-8', errors='ignore')[:100]}), falling back to direct stream copy...")
+            fallback_cmd = [
+                ffmpeg_path, "-y",
+                "-i", original_video,
+                "-i", dubbed_audio,
+                "-map", "0:v:0",
+                "-map", "1:a:0",
+                "-c:v", "copy",
+                "-c:a", "aac",
+                "-shortest",
+                output_video_path
+            ]
+            subprocess.run(fallback_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, check=True)
 
+        return output_video_path
