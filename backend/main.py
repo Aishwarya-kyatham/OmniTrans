@@ -795,4 +795,99 @@ async def recognize_single_frame(
     except Exception as e:
         return {"status": "error", "error": str(e)}
 
+@app.post("/api/live-translate")
+async def live_mic_translate(
+    audio: UploadFile = File(...),
+    target_language: str = Form("es"),
+    source_language: str = Form("auto")
+):
+    """
+    Real-time speech-to-speech translation endpoint.
+    Receives live mic audio snippet, transcribes with Whisper,
+    translates to target_language, synthesizes dubbed audio via EdgeTTS,
+    and returns transcript, translation, and dubbed audio base64 for instant playback.
+    """
+    import base64
+    import uuid
+    import tempfile
+
+    temp_id = str(uuid.uuid4())[:8]
+    raw_in = os.path.join("temp_uploads", f"live_raw_{temp_id}.webm")
+    input_wav = os.path.join("temp_uploads", f"live_in_{temp_id}.wav")
+    output_wav = os.path.join("temp_uploads", f"live_out_{temp_id}.wav")
+
+    try:
+        # 1. Save uploaded live mic audio
+        contents = await audio.read()
+        with open(raw_in, "wb") as f:
+            f.write(contents)
+
+        # Convert webm/ogg/etc to clean 16kHz 16-bit mono PCM WAV for Faster-Whisper
+        ffmpeg_bin = os.environ.get("FFMPEG_BINARY", "ffmpeg")
+        import subprocess
+        subprocess.run([
+            ffmpeg_bin, "-y", "-i", raw_in,
+            "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le",
+            input_wav
+        ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+
+        audio_to_transcribe = input_wav if os.path.exists(input_wav) and os.path.getsize(input_wav) > 100 else raw_in
+
+        # 2. Transcribe with Whisper (sub-second on short speech clips)
+        transcribe_result = await asyncio.to_thread(audio_svc.transcribe, audio_to_transcribe)
+        segments = transcribe_result.get("segments", [])
+        original_text = " ".join([s["text"] for s in segments]).strip()
+        detected_lang = transcribe_result.get("source_language", "en")
+
+        if not original_text:
+            return {
+                "status": "success",
+                "original_text": "",
+                "translated_text": "",
+                "target_language": target_language,
+                "detected_language": detected_lang,
+                "audio_base64": None,
+                "duration_seconds": 0
+            }
+
+        # 3. Translate to target language
+        translated_text = await asyncio.to_thread(
+            translation_svc.translate_text,
+            original_text,
+            target_language,
+            detected_lang
+        )
+
+        # 4. Synthesize dubbed voice via EdgeTTS
+        await dubbing_svc.tts_service.generate_speech(
+            translated_text,
+            "default",
+            target_language,
+            output_wav
+        )
+
+        # 5. Read output audio and encode to base64 for instant browser playback
+        audio_b64 = None
+        if os.path.exists(output_wav) and os.path.getsize(output_wav) > 100:
+            with open(output_wav, "rb") as af:
+                audio_b64 = base64.b64encode(af.read()).decode("utf-8")
+
+        return {
+            "status": "success",
+            "original_text": original_text,
+            "translated_text": translated_text,
+            "detected_language": detected_lang,
+            "target_language": target_language,
+            "audio_base64": audio_b64
+        }
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {"status": "error", "error": str(e)}
+    finally:
+        for p in [raw_in, input_wav, output_wav]:
+            if os.path.exists(p):
+                try: os.remove(p)
+                except: pass
+
 

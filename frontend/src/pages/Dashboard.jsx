@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { LogOut, Video, UploadCloud, CheckCircle2, AlertTriangle, RotateCcw, Sliders, Globe, Link2, ArrowLeft, Download, ChevronDown, Check, FolderDown, Play } from 'lucide-react';
+import { LogOut, Video, UploadCloud, CheckCircle2, AlertTriangle, RotateCcw, Sliders, Globe, Link2, ArrowLeft, Download, ChevronDown, Check, FolderDown, Play, Mic } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import LanguageSelector from '../components/LanguageSelector';
 import LivePipelineTracker from '../components/LivePipelineTracker';
@@ -291,6 +291,17 @@ function Dashboard() {
         </div>
 
         <div className="flex items-center gap-3">
+          {/* Live Mic Button */}
+          <button
+            onClick={() => navigate('/live')}
+            className="flex items-center gap-2 px-4 py-2 rounded-full bg-gradient-to-r from-rose-500/20 to-amber-500/20 hover:from-rose-500/30 hover:to-amber-500/30 border border-rose-500/40 hover:border-rose-400 text-sm font-bold text-rose-300 hover:text-white transition-all shadow-md hover:scale-105 group"
+            title="Real-Time Live Microphone Voice Changer & Translator"
+          >
+            <Mic className="w-4 h-4 text-rose-400 group-hover:scale-110 transition-transform" />
+            <span>Live Mic</span>
+            <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping" />
+          </button>
+
           {/* Downloads Button & Dropdown */}
           <div className="relative" ref={downloadsDropdownRef}>
             <button

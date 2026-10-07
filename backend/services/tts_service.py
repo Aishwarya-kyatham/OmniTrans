@@ -182,6 +182,10 @@ class TTSService:
     def get_available_voices(self, target_language: str) -> list:
         return self.provider.get_available_voices(target_language)
 
+    async def generate_speech(self, text: str, voice: str, target_language: str, output_path: str) -> str:
+        """Asynchronous voice synthesis forwarding to active TTS provider."""
+        return await self.provider.generate_speech(text, voice, target_language, output_path)
+
     def generate_speech_sync(self, text: str, voice: str, target_language: str, output_path: str) -> str:
         """Synchronous wrapper for generating speech across providers with per-thread event loops."""
         try:

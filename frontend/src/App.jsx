@@ -7,6 +7,7 @@ import Login from './pages/Login';
 import Signup from './pages/Signup';
 import Dashboard from './pages/Dashboard';
 import WatchDownloads from './pages/WatchDownloads';
+import LiveMicStudio from './pages/LiveMicStudio';
 import SubtitleEditor from './components/SubtitleEditor';
 
 // Mock Authentication Guard
@@ -99,6 +100,15 @@ function App() {
           element={
             <ProtectedRoute>
               <WatchDownloads />
+            </ProtectedRoute>
+          } 
+        />
+
+        <Route 
+          path="/live" 
+          element={
+            <ProtectedRoute>
+              <LiveMicStudio />
             </ProtectedRoute>
           } 
         />
