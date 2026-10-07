@@ -54,18 +54,34 @@ class EdgeTTSProvider(BaseTTSProvider):
         ],
         "it": [
             {"id": "it-IT-DiegoNeural", "name": "Diego (Italian - Italy, Male)", "gender": "Male"},
-            {"id": "it-IT-[#]ElsaNeural", "name": "Elsa (Italian - Italy, Female)", "gender": "Female"},
+            {"id": "it-IT-ElsaNeural", "name": "Elsa (Italian - Italy, Female)", "gender": "Female"},
         ],
         "pt": [
             {"id": "pt-BR-AntonioNeural", "name": "Antonio (Portuguese - Brazil, Male)", "gender": "Male"},
             {"id": "pt-BR-FranciscaNeural", "name": "Francisca (Portuguese - Brazil, Female)", "gender": "Female"},
-        ]
+        ],
+        "ar": [
+            {"id": "ar-SA-HamedNeural", "name": "Hamed (Arabic - Saudi Arabia, Male)", "gender": "Male"},
+            {"id": "ar-SA-ZariyahNeural", "name": "Zariyah (Arabic - Saudi Arabia, Female)", "gender": "Female"},
+        ],
+        "ko": [
+            {"id": "ko-KR-InJoonNeural", "name": "InJoon (Korean - Korea, Male)", "gender": "Male"},
+            {"id": "ko-KR-SunHiNeural", "name": "SunHi (Korean - Korea, Female)", "gender": "Female"},
+        ],
+        "ru": [
+            {"id": "ru-RU-DmitryNeural", "name": "Dmitry (Russian - Russia, Male)", "gender": "Male"},
+            {"id": "ru-RU-SvetlanaNeural", "name": "Svetlana (Russian - Russia, Female)", "gender": "Female"},
+        ],
     }
 
     def get_available_voices(self, target_language: str) -> list:
+        # Normalize: zh-CN → zh, zh-TW → zh, etc.
         lang = target_language.lower().split('-')[0]
         if lang in self.DEFAULT_VOICES:
             return self.DEFAULT_VOICES[lang]
+        # Also try full code in case someone passes zh-CN directly
+        if target_language.lower() in self.DEFAULT_VOICES:
+            return self.DEFAULT_VOICES[target_language.lower()]
         # Generic fallback voice matching language code prefix
         return [
             {"id": f"{lang}-{lang.upper()}-StandardMaleNeural", "name": f"Default {lang.upper()} Male", "gender": "Male"},
@@ -73,17 +89,43 @@ class EdgeTTSProvider(BaseTTSProvider):
         ]
 
     async def generate_speech(self, text: str, voice: str, target_language: str, output_path: str) -> str:
+        voices = self.get_available_voices(target_language)
+        available_ids = {v["id"] for v in voices}
+        
         selected_voice = voice
-        if not selected_voice or selected_voice == "default":
-            voices = self.get_available_voices(target_language)
-            selected_voice = voices[0]["id"]
+        if not selected_voice or selected_voice == "default" or selected_voice not in available_ids:
+            selected_voice = voices[0]["id"] if voices else "en-US-GuyNeural"
 
         safe_text = text[:30].encode("ascii", "replace").decode("ascii")
         print(f"[EdgeTTS] Synthesizing voice '{selected_voice}' for text: '{safe_text}...'")
         try:
             import edge_tts
+            import subprocess
+            import imageio_ffmpeg
+
+            temp_raw = output_path + ".raw_mp3"
             communicate = edge_tts.Communicate(text, selected_voice)
-            await communicate.save(output_path)
+            await communicate.save(temp_raw)
+
+            if output_path.endswith(".wav"):
+                ffmpeg_path = os.environ.get("FFMPEG_BINARY")
+                if not ffmpeg_path or not os.path.exists(ffmpeg_path):
+                    try: ffmpeg_path = str(imageio_ffmpeg.get_ffmpeg_exe())
+                    except Exception: ffmpeg_path = "ffmpeg"
+
+                cmd = [
+                    ffmpeg_path, "-y", "-i", temp_raw,
+                    "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "1",
+                    output_path
+                ]
+                subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+                if os.path.exists(temp_raw):
+                    os.remove(temp_raw)
+            else:
+                if os.path.exists(output_path):
+                    os.remove(output_path)
+                os.rename(temp_raw, output_path)
+
             return output_path
         except Exception as e:
             print(f"[EdgeTTS Warning] EdgeTTS generation failed ({e}). Falling back to gTTS...")

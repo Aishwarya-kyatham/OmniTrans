@@ -212,6 +212,8 @@ class VideoService:
         ducking_db = float(os.environ.get("AUDIO_DUCKING_DB", "-15"))
         duck_scale = round(10 ** (ducking_db / 20.0), 3)
 
+        has_orig_audio = original_audio_path and os.path.exists(original_audio_path) and os.path.getsize(original_audio_path) > 1000
+
         # 1. Fast Stream Copy Mode (Instant preview, no re-encoding, lossless video)
         if not burn_subtitles:
             print(f"[FastMux] Stream-copying video & mixing audio for '{base_name}'...")
@@ -237,7 +239,7 @@ class VideoService:
                     "-shortest",
                     output_video_path
                 ]
-            else:
+            elif has_orig_audio:
                 filter_complex = (
                     f"[0:a]volume={duck_scale}[bg];"
                     f"[1:a]volume=1.0[fg];"
@@ -250,6 +252,21 @@ class VideoService:
                     "-filter_complex", filter_complex,
                     "-map", "0:v:0",
                     "-map", "[a]",
+                    "-c:v", "copy",
+                    "-c:a", "aac",
+                    "-ar", "44100",
+                    "-ac", "2",
+                    "-b:a", "128k",
+                    "-shortest",
+                    output_video_path
+                ]
+            else:
+                cmd = [
+                    ffmpeg_path, "-y",
+                    "-i", original_video,
+                    "-i", dubbed_audio,
+                    "-map", "0:v:0",
+                    "-map", "1:a:0",
                     "-c:v", "copy",
                     "-c:a", "aac",
                     "-ar", "44100",
@@ -321,3 +338,119 @@ class VideoService:
             subprocess.run(fallback_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, check=True)
 
         return output_video_path
+
+    def _get_ffmpeg_location(self) -> str:
+        """Returns valid absolute path to ffmpeg binary for yt-dlp and subprocesses."""
+        ffmpeg_binary = os.environ.get("FFMPEG_BINARY")
+        if ffmpeg_binary and os.path.exists(ffmpeg_binary):
+            return ffmpeg_binary
+        try:
+            import imageio_ffmpeg
+            return str(imageio_ffmpeg.get_ffmpeg_exe())
+        except Exception:
+            return "ffmpeg"
+
+    def inspect_url(self, url: str) -> dict:
+        """Extracts metadata from YouTube, TikTok, Twitter/X, Bilibili, etc. via yt-dlp."""
+        import yt_dlp
+        ffmpeg_binary = self._get_ffmpeg_location()
+        ydl_opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'skip_download': True,
+            'noplaylist': True,
+            'js_runtimes': {'node': {}},
+            'ffmpeg_location': ffmpeg_binary if os.path.isabs(ffmpeg_binary) else None,
+        }
+        ydl_opts = {k: v for k, v in ydl_opts.items() if v is not None}
+        
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            if not info:
+                raise ValueError("Could not extract video metadata from the provided URL.")
+            if "entries" in info and info["entries"]:
+                first_entry = next((e for e in info["entries"] if e), None)
+                if first_entry:
+                    info = first_entry
+                    
+            duration = int(info.get("duration") or 0)
+            
+            # Extract highest quality thumbnail if available
+            thumbnail = info.get("thumbnail") or ""
+            if not thumbnail and info.get("thumbnails"):
+                thumbs = info.get("thumbnails", [])
+                if isinstance(thumbs, list) and thumbs:
+                    thumbnail = thumbs[-1].get("url", "")
+                    
+            uploader = info.get("uploader") or info.get("channel") or info.get("creator") or info.get("uploader_id") or "Web Video"
+            title = info.get("title") or "Web Video"
+            vid_id = str(info.get("id") or "web_vid")
+            extractor = info.get("extractor_key") or info.get("extractor") or "Web"
+            
+            return {
+                "title": title,
+                "duration": duration,
+                "thumbnail": thumbnail,
+                "uploader": uploader,
+                "url": url,
+                "id": vid_id,
+                "extractor": extractor
+            }
+
+    def download_url_video(self, url: str) -> dict:
+        """
+        Downloads web video into temp_uploads using yt-dlp.
+        Merges best video & audio into MP4 format.
+        """
+        import yt_dlp
+        import re
+        
+        info = self.inspect_url(url)
+        raw_title = info.get("title", "web_video") or "web_video"
+        vid_id = info.get("id", "vid") or "vid"
+        
+        # Sanitize title for filename across Windows and Linux
+        clean_title = re.sub(r'[\s]+', '_', raw_title)
+        clean_title = re.sub(r'[^\w\-]', '_', clean_title, flags=re.UNICODE)
+        clean_title = re.sub(r'_+', '_', clean_title).strip('_')
+        base_name = f"{clean_title[:45]}_{vid_id}" if clean_title else f"video_{vid_id}"
+        
+        os.makedirs(self.upload_dir, exist_ok=True)
+        output_template = os.path.join(self.upload_dir, f"{base_name}.%(ext)s")
+        ffmpeg_binary = self._get_ffmpeg_location()
+        
+        ydl_opts = {
+            'format': 'bestvideo*+bestaudio/best',
+            'outtmpl': output_template,
+            'merge_output_format': 'mp4',
+            'quiet': False,
+            'no_warnings': True,
+            'noplaylist': True,
+            'js_runtimes': {'node': {}},
+            'ffmpeg_location': ffmpeg_binary if os.path.isabs(ffmpeg_binary) else None,
+            'max_filesize': 500 * 1024 * 1024, # 500 MB limit
+        }
+        ydl_opts = {k: v for k, v in ydl_opts.items() if v is not None}
+        
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url])
+            
+        expected_path = os.path.join(self.upload_dir, f"{base_name}.mp4")
+        if not os.path.exists(expected_path):
+            for f in os.listdir(self.upload_dir):
+                if f.startswith(base_name) and not f.endswith(".wav") and not f.endswith(".part"):
+                    expected_path = os.path.join(self.upload_dir, f)
+                    break
+                    
+        if not os.path.exists(expected_path):
+            raise FileNotFoundError(f"Download failed or output file could not be located in {self.upload_dir}")
+            
+        return {
+            "file_path": expected_path,
+            "base_name": base_name,
+            "title": raw_title,
+            "duration": info.get("duration", 0),
+            "thumbnail": info.get("thumbnail", ""),
+            "uploader": info.get("uploader", ""),
+            "extractor": info.get("extractor", "Web")
+        }

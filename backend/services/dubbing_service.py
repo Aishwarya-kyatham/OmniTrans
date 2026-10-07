@@ -5,9 +5,17 @@ from pydub import AudioSegment
 from concurrent.futures import ThreadPoolExecutor
 from services.tts_service import TTSService
 from services.diarization_service import DiarizationService
+import imageio_ffmpeg
 
 # Explicitly bind ffmpeg executable for pydub on Windows
-ffmpeg_bin = os.environ.get("FFMPEG_BINARY", "ffmpeg")
+ffmpeg_bin = os.environ.get("FFMPEG_BINARY")
+if not ffmpeg_bin or not os.path.exists(ffmpeg_bin):
+    try:
+        ffmpeg_bin = str(imageio_ffmpeg.get_ffmpeg_exe())
+        os.environ["FFMPEG_BINARY"] = ffmpeg_bin
+    except Exception:
+        ffmpeg_bin = "ffmpeg"
+
 AudioSegment.converter = ffmpeg_bin
 AudioSegment.ffmpeg = ffmpeg_bin
 AudioSegment.ffprobe = ffmpeg_bin
@@ -20,6 +28,15 @@ class DubbingService:
 
         self.tts_service = TTSService()
         self.diarization_service = DiarizationService()
+
+    def _get_ffmpeg_path(self) -> str:
+        ffmpeg_path = os.environ.get("FFMPEG_BINARY")
+        if ffmpeg_path and os.path.exists(ffmpeg_path):
+            return ffmpeg_path
+        try:
+            return str(imageio_ffmpeg.get_ffmpeg_exe())
+        except Exception:
+            return "ffmpeg"
 
     def _get_wav_duration(self, wav_path: str) -> float:
         """Fast duration calculation using python native wave module."""
@@ -70,7 +87,7 @@ class DubbingService:
 
         filter_str = ",".join(filter_chain)
 
-        ffmpeg_path = os.environ.get("FFMPEG_BINARY", "ffmpeg")
+        ffmpeg_path = self._get_ffmpeg_path()
         cmd = [
             ffmpeg_path, "-y", "-i", input_wav,
             "-filter:a", filter_str,
@@ -78,8 +95,10 @@ class DubbingService:
         ]
 
         try:
-            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-            return output_wav
+            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, check=True)
+            if os.path.exists(output_wav) and os.path.getsize(output_wav) > 0:
+                return output_wav
+            return input_wav
         except Exception as e:
             print(f"[TimeStretch Warning] FFmpeg atempo failed: {e}. Using original audio.")
             return input_wav
@@ -159,8 +178,7 @@ class DubbingService:
 
                 # Time-stretch and pad in the worker thread
                 if abs(speed_ratio - 1.0) > 0.05 or actual_dur_sec < t["target_dur_sec"] * 0.85:
-                    self.time_stretch_audio(t["raw_wav"], t["stretched_wav"], speed_ratio, target_duration=t["target_dur_sec"])
-                    t["final_wav"] = t["stretched_wav"]
+                    t["final_wav"] = self.time_stretch_audio(t["raw_wav"], t["stretched_wav"], speed_ratio, target_duration=t["target_dur_sec"])
                 else:
                     t["final_wav"] = t["raw_wav"]
 

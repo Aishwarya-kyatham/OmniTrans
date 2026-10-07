@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import sys
 import os
 import json
+import asyncio
 import imageio_ffmpeg
 
 # Ensure UTF-8 output encoding across Windows consoles
@@ -75,6 +76,7 @@ class SaveSubtitlesPayload(BaseModel):
 
 class VoiceMapPayload(BaseModel):
     voice_map: dict
+    target_language: Optional[str] = None
 
 import time
 
@@ -283,7 +285,7 @@ async def get_voices(base_name: str, lang: str = "es"):
 @app.post("/api/subtitles/{base_name}/voices")
 async def save_voices(base_name: str, payload: VoiceMapPayload):
     """Saves updated speaker-to-voice mapping for project."""
-    dubbing_svc.diarization_service.save_voice_map(base_name, payload.voice_map)
+    dubbing_svc.diarization_service.save_voice_map(base_name, payload.voice_map, payload.target_language)
     return {"status": "success", "message": "Voice map updated successfully", "voice_map": payload.voice_map}
 
 
@@ -614,6 +616,68 @@ async def upload_video(
         import traceback
         traceback.print_exc()
         return {"status": "error", "info": str(e)}
+
+# --- Web Video & YouTube Ingestion Endpoints (yt-dlp) ---
+
+class InspectUrlPayload(BaseModel):
+    url: str
+
+class UploadUrlPayload(BaseModel):
+    url: str
+    target_language: Optional[str] = "es"
+
+@app.post("/api/inspect-url")
+async def inspect_url_endpoint(payload: InspectUrlPayload):
+    """Inspects video metadata from YouTube, TikTok, Twitter/X, Bilibili, etc. via yt-dlp."""
+    try:
+        if not payload.url or not payload.url.strip():
+            return {"status": "error", "message": "URL cannot be empty"}
+        info = await asyncio.to_thread(video_svc.inspect_url, payload.url.strip())
+        return {"status": "success", "info": info}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.post("/api/upload-url")
+async def upload_url_endpoint(payload: UploadUrlPayload, background_tasks: BackgroundTasks):
+    """
+    Downloads video from web URL (YouTube, TikTok, Twitter/X, Bilibili) using yt-dlp
+    and queues it directly into the OmniTrans AI translation & dubbing pipeline.
+    """
+    try:
+        url = payload.url.strip()
+        target_lang = payload.target_language or "es"
+        print(f">>> /api/upload-url HIT for URL: {url} -> {target_lang} <<<")
+        
+        # 1. Download video with yt-dlp asynchronously
+        download_meta = await asyncio.to_thread(video_svc.download_url_video, url)
+        file_path = download_meta["file_path"]
+        base_name = download_meta["base_name"]
+        
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"Downloaded file not found at '{file_path}'")
+            
+        print(f"URL video successfully downloaded: '{file_path}'. Base name: '{base_name}'. Enqueueing pipeline...")
+        
+        # 2. Add to background pipeline
+        background_tasks.add_task(process_video_pipeline, file_path, base_name, target_lang)
+        
+        return {
+            "status": "processing",
+            "base_name": base_name,
+            "filename": os.path.basename(file_path),
+            "title": download_meta.get("title", ""),
+            "thumbnail": download_meta.get("thumbnail", ""),
+            "duration": download_meta.get("duration", 0),
+            "uploader": download_meta.get("uploader", ""),
+            "extractor": download_meta.get("extractor", "Web"),
+            "info": f"Web video '{download_meta.get('title', '')}' imported and processing started."
+        }
+    except Exception as e:
+        print(f"!!! CRITICAL URL IMPORT ERROR !!! : {e}")
+        import traceback
+        traceback.print_exc()
+        return {"status": "error", "message": str(e)}
+
 
 # --- Translumo Multi-Engine Video OCR Endpoints ---
 

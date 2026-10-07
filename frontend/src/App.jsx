@@ -19,6 +19,17 @@ const ProtectedRoute = ({ children }) => {
   return children;
 };
 
+// Public/Guest Route: if already logged in, redirect directly to /app
+const PublicRoute = ({ children }) => {
+  const isAuthenticated = localStorage.getItem('isAuthenticated') === 'true';
+  
+  if (isAuthenticated) {
+    return <Navigate to="/app" replace />;
+  }
+  
+  return children;
+};
+
 const DirectEditorWrapper = () => {
   const { baseName } = useParams();
   const navigate = useNavigate();
@@ -38,9 +49,30 @@ function App() {
   return (
     <Router>
       <Routes>
-        <Route path="/" element={<Landing />} />
-        <Route path="/login" element={<Login />} />
-        <Route path="/signup" element={<Signup />} />
+        <Route 
+          path="/" 
+          element={
+            <PublicRoute>
+              <Landing />
+            </PublicRoute>
+          } 
+        />
+        <Route 
+          path="/login" 
+          element={
+            <PublicRoute>
+              <Login />
+            </PublicRoute>
+          } 
+        />
+        <Route 
+          path="/signup" 
+          element={
+            <PublicRoute>
+              <Signup />
+            </PublicRoute>
+          } 
+        />
         
         {/* Protected Application Route */}
         <Route 

@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { LogOut, Video, UploadCloud, CheckCircle2, AlertTriangle, RotateCcw, Sliders } from 'lucide-react';
+import { LogOut, Video, UploadCloud, CheckCircle2, AlertTriangle, RotateCcw, Sliders, Globe, Link2, ArrowLeft } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import LanguageSelector from '../components/LanguageSelector';
 import LivePipelineTracker from '../components/LivePipelineTracker';
 import ExportModal from '../components/ExportModal';
 import SubtitleEditor from '../components/SubtitleEditor';
+import UrlImporter from '../components/UrlImporter';
 
 const BACKEND = 'http://localhost:8000';
 
@@ -13,6 +14,7 @@ function Dashboard() {
   const navigate = useNavigate();
 
   const [file, setFile] = useState(null);
+  const [uploadMode, setUploadMode] = useState('upload'); // 'upload' | 'url'
   const [selectedLanguage, setSelectedLanguage] = useState('es');
   const [status, setStatus] = useState('idle'); // idle | processing | complete | error
   const [errorMsg, setErrorMsg] = useState('');
@@ -81,6 +83,21 @@ function Dashboard() {
 
       const pollStatus = async () => {
         try {
+          // Primary: check pipeline tracker (works for all languages immediately)
+          const progressRes = await fetch(`${BACKEND}/api/progress/${baseName}`);
+          if (progressRes.ok) {
+            const progressData = await progressRes.json();
+            if (progressData.status === 'complete') {
+              setStatus('complete');
+              return;
+            }
+            if (progressData.status === 'error') {
+              setStatus('error');
+              setErrorMsg(progressData.error || 'Pipeline failed.');
+              return;
+            }
+          }
+          // Fallback: also check if output file exists on disk
           const statusRes = await fetch(`${BACKEND}/api/status/${expectedFileName}`);
           if (statusRes.ok) {
             const data = await statusRes.json();
@@ -102,6 +119,60 @@ function Dashboard() {
       setStatus('error');
       setErrorMsg(err.message || 'Failed to connect to the server. Make sure the backend is running on port 8000.');
     }
+  };
+
+  const handleUrlImportStart = (importData) => {
+    if (pollRef.current) clearTimeout(pollRef.current);
+
+    const baseName = importData.base_name;
+    const expectedFileName = `${baseName}_fully_translated_${selectedLanguage}.mp4`;
+
+    setActiveBaseName(baseName);
+    setGeneratedFileName(expectedFileName);
+    setFile({
+      name: importData.title || importData.filename || baseName,
+      size: 0,
+      isUrl: true,
+      thumbnail: importData.thumbnail,
+      duration: importData.duration,
+      uploader: importData.uploader,
+      extractor: importData.extractor,
+    });
+    setStatus('processing');
+    setErrorMsg('');
+
+    const pollStatus = async () => {
+      try {
+        // Primary: check pipeline tracker (works for all languages immediately)
+        const progressRes = await fetch(`${BACKEND}/api/progress/${baseName}`);
+        if (progressRes.ok) {
+          const progressData = await progressRes.json();
+          if (progressData.status === 'complete') {
+            setStatus('complete');
+            return;
+          }
+          if (progressData.status === 'error') {
+            setStatus('error');
+            setErrorMsg(progressData.error || 'Pipeline failed. Please try again.');
+            return;
+          }
+        }
+        // Fallback: also check if output file exists on disk
+        const statusRes = await fetch(`${BACKEND}/api/status/${expectedFileName}`);
+        if (statusRes.ok) {
+          const data = await statusRes.json();
+          if (data.status === 'complete') {
+            setStatus('complete');
+            return;
+          }
+        }
+      } catch (err) {
+        console.warn('Poll error:', err);
+      }
+      pollRef.current = setTimeout(pollStatus, 1500);
+    };
+
+    pollRef.current = setTimeout(pollStatus, 2000);
   };
 
   const handleReset = () => {
@@ -186,78 +257,123 @@ function Dashboard() {
                 exit={{ opacity: 0, y: -20 }}
                 className="bg-slate-900/70 p-6 sm:p-8 rounded-[2rem] shadow-2xl shadow-black/50 border border-slate-700/50 backdrop-blur-xl"
               >
-                {!file ? (
-                  <div
-                    onDragEnter={(e) => { e.preventDefault(); setIsDragging(true); }}
-                    onDragLeave={(e) => { e.preventDefault(); setIsDragging(false); }}
-                    onDragOver={(e) => e.preventDefault()}
-                    onDrop={handleDrop}
-                    onClick={() => fileInputRef.current?.click()}
-                    className={`relative p-12 w-full border-2 border-dashed rounded-[2rem] transition-all duration-300 cursor-pointer flex flex-col items-center justify-center
-                      ${isDragging
-                        ? 'border-emerald-400 bg-emerald-400/10 shadow-[0_0_40px_rgba(52,211,153,0.2)]'
-                        : 'border-slate-600 bg-slate-800/50 hover:bg-slate-700/60 hover:border-slate-400'
-                      }`}
+                {/* Source Selection Segmented Tabs */}
+                <div className="flex p-1.5 bg-slate-950/80 rounded-2xl border border-slate-800 mb-6">
+                  <button
+                    type="button"
+                    onClick={() => { setUploadMode('upload'); setErrorMsg(''); }}
+                    className={`flex-1 py-3 px-3 sm:px-4 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center gap-2 transition-all ${
+                      uploadMode === 'upload'
+                        ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-lg shadow-indigo-500/25'
+                        : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
+                    }`}
                   >
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      accept="video/*,.mp4,.mov,.avi,.mkv,.webm"
-                      className="hidden"
-                      onChange={(e) => handleFileChange(e.target.files?.[0])}
-                    />
-                    <div className={`flex justify-center p-5 rounded-full mb-6 shadow-2xl transition-colors ${isDragging ? 'bg-emerald-500/20' : 'bg-slate-900'}`}>
-                      {isDragging
-                        ? <Video className="w-12 h-12 text-emerald-400" />
-                        : <UploadCloud className="w-12 h-12 text-blue-400" />
-                      }
-                    </div>
-                    <h3 className="text-2xl font-extrabold text-slate-200 mb-2">
-                      {isDragging ? 'Drop it here!' : 'Drag & drop your video'}
-                    </h3>
-                    <p className="text-base text-slate-400 text-center max-w-sm">
-                      or click to browse files<br />
-                      <span className="text-sm text-slate-500">MP4, MOV, WebM, AVI, MKV</span>
-                    </p>
-                  </div>
-                ) : (
-                  <div className="p-5 bg-slate-900 border border-emerald-500/50 rounded-2xl mb-6">
-                    <div className="flex items-center justify-between">
-                      <div className="truncate pr-4">
-                        <p className="text-xs text-slate-400 mb-1">Selected Video</p>
-                        <p className="font-bold text-emerald-400 truncate">{file.name}</p>
-                        <p className="text-xs text-slate-500 mt-0.5">{(file.size / (1024 * 1024)).toFixed(1)} MB</p>
-                      </div>
-                      <button
-                        onClick={() => { setFile(null); setErrorMsg(''); }}
-                        className="text-xs text-rose-400 hover:text-rose-300 font-medium px-3 py-1.5 bg-rose-400/10 rounded-lg transition-colors flex-shrink-0"
-                      >
-                        Remove
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {errorMsg && (
-                  <div className="flex items-center gap-2 mt-4 mb-2 text-rose-400 bg-rose-400/10 p-3 rounded-xl text-sm font-medium border border-rose-400/20">
-                    <AlertTriangle className="w-4 h-4 flex-shrink-0" />
-                    {errorMsg}
-                  </div>
-                )}
-
-                <div className={`transition-all duration-300 mt-4 ${file ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}>
-                  <LanguageSelector selected={selectedLanguage} onSelect={setSelectedLanguage} />
+                    <UploadCloud className="w-4 h-4" />
+                    <span>Upload Video File</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setUploadMode('url'); setErrorMsg(''); }}
+                    className={`flex-1 py-3 px-3 sm:px-4 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center gap-2 transition-all ${
+                      uploadMode === 'url'
+                        ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg shadow-emerald-500/25'
+                        : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
+                    }`}
+                  >
+                    <Globe className="w-4 h-4 text-emerald-300" />
+                    <span>Import Web / YouTube</span>
+                    <span className="hidden sm:inline-block ml-1 text-[10px] uppercase font-black tracking-wider px-2 py-0.5 rounded-full bg-emerald-400/20 text-emerald-300 border border-emerald-400/30">
+                      yt-dlp
+                    </span>
+                  </button>
                 </div>
 
-                {file && (
-                  <motion.button
-                    onClick={startTranslation}
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.98 }}
-                    className="w-full mt-6 py-4 bg-gradient-to-r from-blue-500 via-teal-500 to-emerald-500 hover:from-blue-600 hover:to-emerald-600 text-white rounded-xl font-bold text-lg shadow-lg shadow-emerald-500/20 transition-all flex items-center justify-center gap-2"
-                  >
-                    🚀 Start AI Translation
-                  </motion.button>
+                {uploadMode === 'upload' ? (
+                  <>
+                    {!file ? (
+                      <div
+                        onDragEnter={(e) => { e.preventDefault(); setIsDragging(true); }}
+                        onDragLeave={(e) => { e.preventDefault(); setIsDragging(false); }}
+                        onDragOver={(e) => e.preventDefault()}
+                        onDrop={handleDrop}
+                        onClick={() => fileInputRef.current?.click()}
+                        className={`relative p-12 w-full border-2 border-dashed rounded-[2rem] transition-all duration-300 cursor-pointer flex flex-col items-center justify-center
+                          ${isDragging
+                            ? 'border-emerald-400 bg-emerald-400/10 shadow-[0_0_40px_rgba(52,211,153,0.2)]'
+                            : 'border-slate-600 bg-slate-800/50 hover:bg-slate-700/60 hover:border-slate-400'
+                          }`}
+                      >
+                        <input
+                          ref={fileInputRef}
+                          type="file"
+                          accept="video/*,.mp4,.mov,.avi,.mkv,.webm"
+                          className="hidden"
+                          onChange={(e) => handleFileChange(e.target.files?.[0])}
+                        />
+                        <div className={`flex justify-center p-5 rounded-full mb-6 shadow-2xl transition-colors ${isDragging ? 'bg-emerald-500/20' : 'bg-slate-900'}`}>
+                          {isDragging
+                            ? <Video className="w-12 h-12 text-emerald-400" />
+                            : <UploadCloud className="w-12 h-12 text-blue-400" />
+                          }
+                        </div>
+                        <h3 className="text-2xl font-extrabold text-slate-200 mb-2">
+                          {isDragging ? 'Drop it here!' : 'Drag & drop your video'}
+                        </h3>
+                        <p className="text-base text-slate-400 text-center max-w-sm">
+                          or click to browse files<br />
+                          <span className="text-sm text-slate-500">MP4, MOV, WebM, AVI, MKV</span>
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="p-5 bg-slate-900 border border-emerald-500/50 rounded-2xl mb-6">
+                        <div className="flex items-center justify-between">
+                          <div className="truncate pr-4">
+                            <p className="text-xs text-slate-400 mb-1">Selected Video</p>
+                            <p className="font-bold text-emerald-400 truncate">{file.name}</p>
+                            <p className="text-xs text-slate-500 mt-0.5">{(file.size / (1024 * 1024)).toFixed(1)} MB</p>
+                          </div>
+                          <button
+                            onClick={() => { setFile(null); setErrorMsg(''); }}
+                            className="text-xs text-rose-400 hover:text-rose-300 font-medium px-3 py-1.5 bg-rose-400/10 rounded-lg transition-colors flex-shrink-0"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {errorMsg && (
+                      <div className="flex items-center gap-2 mt-4 mb-2 text-rose-400 bg-rose-400/10 p-3 rounded-xl text-sm font-medium border border-rose-400/20">
+                        <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+                        {errorMsg}
+                      </div>
+                    )}
+
+                    <div className={`transition-all duration-300 mt-4 ${file ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}>
+                      <LanguageSelector selected={selectedLanguage} onSelect={setSelectedLanguage} />
+                    </div>
+
+                    {file && (
+                      <motion.button
+                        onClick={startTranslation}
+                        whileHover={{ scale: 1.02 }}
+                        whileTap={{ scale: 0.98 }}
+                        className="w-full mt-6 py-4 bg-gradient-to-r from-blue-500 via-teal-500 to-emerald-500 hover:from-blue-600 hover:to-emerald-600 text-white rounded-xl font-bold text-lg shadow-lg shadow-emerald-500/20 transition-all flex items-center justify-center gap-2"
+                      >
+                        🚀 Start AI Translation
+                      </motion.button>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <div className="mb-5">
+                      <LanguageSelector selected={selectedLanguage} onSelect={setSelectedLanguage} />
+                    </div>
+                    <UrlImporter
+                      selectedLanguage={selectedLanguage}
+                      onImportStart={handleUrlImportStart}
+                    />
+                  </>
                 )}
               </motion.div>
             )}
@@ -298,11 +414,20 @@ function Dashboard() {
                     />
                   </div>
 
-                  <div className="flex items-center justify-between">
-                    <p className="text-sm text-slate-400">
-                      Processing: <span className="text-slate-200 font-semibold">{file?.name}</span>
-                    </p>
-                    <p className="text-sm text-slate-500 font-mono">Don't close this tab</p>
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="flex items-center gap-3 truncate min-w-0">
+                      {file?.thumbnail && (
+                        <img
+                          src={file.thumbnail}
+                          alt="Video thumbnail"
+                          className="w-12 h-8 rounded-lg object-cover border border-slate-700 flex-shrink-0"
+                        />
+                      )}
+                      <p className="text-sm text-slate-400 truncate">
+                        Processing: <span className="text-slate-200 font-semibold">{file?.name}</span>
+                      </p>
+                    </div>
+                    <p className="text-sm text-slate-500 font-mono flex-shrink-0">Don't close this tab</p>
                   </div>
                 </div>
               </motion.div>
@@ -339,12 +464,25 @@ function Dashboard() {
                 exit={{ opacity: 0 }}
                 className="w-full"
               >
-                {/* Success Banner */}
-                <div className="flex items-center gap-3 p-4 mb-6 bg-emerald-500/10 border border-emerald-500/30 rounded-2xl">
-                  <CheckCircle2 className="w-6 h-6 text-emerald-400 flex-shrink-0" />
-                  <div>
-                    <p className="font-bold text-emerald-300">Translation Complete! 🎉</p>
-                    <p className="text-xs text-emerald-400/70">Your video has been dubbed and is ready to preview below.</p>
+                {/* Success Banner & Back to Dashboard */}
+                <div className="flex items-center justify-between gap-3 p-4 mb-6 bg-emerald-500/10 border border-emerald-500/30 rounded-2xl">
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={handleReset}
+                      className="p-2 bg-slate-800/80 hover:bg-slate-700 text-slate-200 hover:text-white rounded-xl border border-slate-700 transition-all flex items-center gap-1.5 text-xs font-semibold"
+                      title="Back to Dashboard"
+                    >
+                      <ArrowLeft className="w-4 h-4" />
+                      <span>Back to Dashboard</span>
+                    </button>
+                    <div className="h-6 w-px bg-emerald-500/30 hidden sm:block"></div>
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 className="w-5 h-5 text-emerald-400 flex-shrink-0" />
+                      <div>
+                        <p className="font-bold text-emerald-300 text-sm">Translation Complete! 🎉</p>
+                        <p className="text-xs text-emerald-400/70">Your video is dubbed & ready to preview.</p>
+                      </div>
+                    </div>
                   </div>
                 </div>
 

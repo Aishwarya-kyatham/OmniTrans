@@ -8,8 +8,12 @@ const SUPPORTED_LANGUAGES = [
   { code: 'de', name: 'German (Deutsch)' },
   { code: 'hi', name: 'Hindi (हिंदी)' },
   { code: 'ja', name: 'Japanese (日本語)' },
-  { code: 'zh-CN', name: 'Chinese (简体中文)' },
-  { code: 'ar', name: 'Arabic (العربية)' }
+  { code: 'zh', name: 'Chinese (简体中文)' },
+  { code: 'ar', name: 'Arabic (العربية)' },
+  { code: 'ko', name: 'Korean (한국어)' },
+  { code: 'ru', name: 'Russian (Русский)' },
+  { code: 'pt', name: 'Portuguese (Português)' },
+  { code: 'it', name: 'Italian (Italiano)' },
 ];
 
 const LanguageSelector = ({ selected, onSelect }) => {

@@ -110,23 +110,28 @@ class DiarizationService:
 
         return voice_map
 
-    def save_voice_map(self, base_name: str, voice_map: dict):
-        """Saves voice mapping configuration to results/{base_name}_voice_map.json."""
+    def save_voice_map(self, base_name: str, voice_map: dict, target_language: str = None):
+        """Saves voice mapping configuration to results/{base_name}_{lang}_voice_map.json."""
         os.makedirs("results", exist_ok=True)
-        path = os.path.join("results", f"{base_name}_voice_map.json")
+        lang_suffix = f"_{target_language}" if target_language else ""
+        path = os.path.join("results", f"{base_name}{lang_suffix}_voice_map.json")
         with open(path, "w", encoding="utf-8") as f:
             json.dump(voice_map, f, indent=4)
         print(f"Saved voice map to {path}")
 
     def load_voice_map(self, base_name: str, segments: list, target_language: str) -> dict:
-        """Loads voice map if saved, or generates and saves default voice map."""
-        path = os.path.join("results", f"{base_name}_voice_map.json")
+        """Loads language-specific voice map if saved, or generates and saves default voice map."""
+        lang_suffix = f"_{target_language}" if target_language else ""
+        path = os.path.join("results", f"{base_name}{lang_suffix}_voice_map.json")
         if os.path.exists(path):
-            with open(path, "r", encoding="utf-8") as f:
-                return json.load(f)
+            saved = json.load(open(path, "r", encoding="utf-8"))
+            # Validate it contains valid voice IDs for this language
+            available_ids = {v["id"] for v in self.tts_service.get_available_voices(target_language)}
+            if any(v in available_ids for v in saved.values()):
+                return saved
         
-        # Generate default
+        # Generate default for this language
         default_map = self.get_default_voice_map(segments, target_language)
-        self.save_voice_map(base_name, default_map)
+        self.save_voice_map(base_name, default_map, target_language)
         return default_map
 
