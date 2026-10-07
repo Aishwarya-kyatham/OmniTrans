@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { LogOut, Video, UploadCloud, CheckCircle2, AlertTriangle, RotateCcw, Sliders, Globe, Link2, ArrowLeft } from 'lucide-react';
+import { LogOut, Video, UploadCloud, CheckCircle2, AlertTriangle, RotateCcw, Sliders, Globe, Link2, ArrowLeft, Download, ChevronDown, Check, FolderDown } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import LanguageSelector from '../components/LanguageSelector';
 import LivePipelineTracker from '../components/LivePipelineTracker';
@@ -23,9 +23,43 @@ function Dashboard() {
   const [currentView, setCurrentView] = useState('dashboard');
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  const [isDownloadsOpen, setIsDownloadsOpen] = useState(false);
+  const [downloadedItems, setDownloadedItems] = useState(() => {
+    try {
+      const saved = localStorage.getItem('omnitrans_downloads');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
 
   const pollRef = useRef(null);
   const fileInputRef = useRef(null);
+  const downloadsDropdownRef = useRef(null);
+
+  // Close downloads dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (downloadsDropdownRef.current && !downloadsDropdownRef.current.contains(e.target)) {
+        setIsDownloadsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const saveDownloadedItem = (item) => {
+    setDownloadedItems((prev) => {
+      const exists = prev.some((d) => d.fileName === item.fileName);
+      const updated = exists ? prev : [item, ...prev];
+      try {
+        localStorage.setItem('omnitrans_downloads', JSON.stringify(updated));
+      } catch (e) {
+        console.warn('Could not persist downloads to localStorage:', e);
+      }
+      return updated;
+    });
+  };
 
   useEffect(() => {
     return () => { if (pollRef.current) clearTimeout(pollRef.current); };
@@ -89,6 +123,15 @@ function Dashboard() {
             const progressData = await progressRes.json();
             if (progressData.status === 'complete') {
               setStatus('complete');
+              saveDownloadedItem({
+                fileName: expectedFileName,
+                baseName,
+                title: file?.name || baseName,
+                language: selectedLanguage,
+                timestamp: new Date().toLocaleString(),
+                downloadUrl: `${BACKEND}/api/download/${expectedFileName}`,
+                streamUrl: `${BACKEND}/api/stream/${expectedFileName}`
+              });
               return;
             }
             if (progressData.status === 'error') {
@@ -103,6 +146,15 @@ function Dashboard() {
             const data = await statusRes.json();
             if (data.status === 'complete') {
               setStatus('complete');
+              saveDownloadedItem({
+                fileName: expectedFileName,
+                baseName,
+                title: file?.name || baseName,
+                language: selectedLanguage,
+                timestamp: new Date().toLocaleString(),
+                downloadUrl: `${BACKEND}/api/download/${expectedFileName}`,
+                streamUrl: `${BACKEND}/api/stream/${expectedFileName}`
+              });
               return;
             }
           }
@@ -149,6 +201,15 @@ function Dashboard() {
           const progressData = await progressRes.json();
           if (progressData.status === 'complete') {
             setStatus('complete');
+            saveDownloadedItem({
+              fileName: expectedFileName,
+              baseName,
+              title: importData.title || importData.filename || baseName,
+              language: selectedLanguage,
+              timestamp: new Date().toLocaleString(),
+              downloadUrl: `${BACKEND}/api/download/${expectedFileName}`,
+              streamUrl: `${BACKEND}/api/stream/${expectedFileName}`
+            });
             return;
           }
           if (progressData.status === 'error') {
@@ -163,6 +224,15 @@ function Dashboard() {
           const data = await statusRes.json();
           if (data.status === 'complete') {
             setStatus('complete');
+            saveDownloadedItem({
+              fileName: expectedFileName,
+              baseName,
+              title: importData.title || importData.filename || baseName,
+              language: selectedLanguage,
+              timestamp: new Date().toLocaleString(),
+              downloadUrl: `${BACKEND}/api/download/${expectedFileName}`,
+              streamUrl: `${BACKEND}/api/stream/${expectedFileName}`
+            });
             return;
           }
         }
@@ -219,13 +289,104 @@ function Dashboard() {
             Omni<span className="text-emerald-400">Trans</span>
           </span>
         </div>
-        <button
-          onClick={handleSignOut}
-          className="flex items-center gap-2 px-4 py-2 rounded-full bg-slate-800/60 hover:bg-slate-700/60 border border-slate-700 text-sm font-medium text-slate-300 transition-colors"
-        >
-          <LogOut className="w-4 h-4" />
-          Sign out
-        </button>
+
+        <div className="flex items-center gap-3">
+          {/* Downloads Button & Dropdown */}
+          <div className="relative" ref={downloadsDropdownRef}>
+            <button
+              onClick={() => setIsDownloadsOpen(!isDownloadsOpen)}
+              className="flex items-center gap-2 px-4 py-2 rounded-full bg-slate-800/80 hover:bg-slate-700/80 border border-slate-700 hover:border-emerald-500/50 text-sm font-semibold text-slate-200 transition-all shadow-md group"
+              title="View Downloaded / Translated Videos"
+            >
+              <Download className="w-4 h-4 text-emerald-400 group-hover:scale-110 transition-transform" />
+              <span>Downloads</span>
+              {downloadedItems.length > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full text-[11px] font-bold bg-emerald-500 text-slate-950">
+                  {downloadedItems.length}
+                </span>
+              )}
+              <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform ${isDownloadsOpen ? 'rotate-180' : ''}`} />
+            </button>
+
+            {/* Downloads Dropdown Menu */}
+            <AnimatePresence>
+              {isDownloadsOpen && (
+                <motion.div
+                  initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                  transition={{ duration: 0.15 }}
+                  className="absolute right-0 mt-2 w-80 sm:w-96 bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl p-4 z-50 backdrop-blur-xl"
+                >
+                  <div className="flex items-center justify-between pb-3 mb-3 border-b border-slate-800">
+                    <div className="flex items-center gap-2">
+                      <FolderDown className="w-4 h-4 text-emerald-400" />
+                      <h4 className="text-sm font-bold text-white">Downloaded Videos</h4>
+                    </div>
+                    <span className="text-xs text-slate-400">{downloadedItems.length} item(s)</span>
+                  </div>
+
+                  {downloadedItems.length === 0 ? (
+                    <div className="py-8 text-center text-slate-400 text-xs">
+                      <Download className="w-8 h-8 text-slate-600 mx-auto mb-2 opacity-60" />
+                      <p className="font-semibold text-slate-300">No downloads yet</p>
+                      <p className="text-slate-500 mt-1">Videos translated with your selected language will appear here for instant download.</p>
+                    </div>
+                  ) : (
+                    <div className="max-h-72 overflow-y-auto space-y-2 pr-1">
+                      {downloadedItems.map((item, idx) => (
+                        <div
+                          key={idx}
+                          className="p-3 bg-slate-800/60 hover:bg-slate-800 border border-slate-700/60 rounded-xl flex items-center justify-between gap-3 transition-colors"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <p className="text-xs font-semibold text-slate-200 truncate">{item.title}</p>
+                            <div className="flex items-center gap-2 mt-1 text-[11px] text-slate-400">
+                              <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 font-mono font-bold uppercase">
+                                {item.language}
+                              </span>
+                              <span>{item.timestamp}</span>
+                            </div>
+                          </div>
+                          <a
+                            href={item.downloadUrl}
+                            download
+                            className="p-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg transition-transform hover:scale-105 shrink-0"
+                            title="Download MP4"
+                          >
+                            <Download className="w-4 h-4" />
+                          </a>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {downloadedItems.length > 0 && (
+                    <div className="pt-3 mt-3 border-t border-slate-800 flex justify-between items-center text-xs">
+                      <button
+                        onClick={() => {
+                          setDownloadedItems([]);
+                          localStorage.removeItem('omnitrans_downloads');
+                        }}
+                        className="text-rose-400 hover:text-rose-300 text-[11px]"
+                      >
+                        Clear history
+                      </button>
+                    </div>
+                  )}
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </div>
+
+          <button
+            onClick={handleSignOut}
+            className="flex items-center gap-2 px-4 py-2 rounded-full bg-slate-800/60 hover:bg-slate-700/60 border border-slate-700 text-sm font-medium text-slate-300 transition-colors"
+          >
+            <LogOut className="w-4 h-4" />
+            Sign out
+          </button>
+        </div>
       </div>
 
       {/* Page Title */}
