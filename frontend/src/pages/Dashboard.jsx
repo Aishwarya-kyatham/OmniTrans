@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { LogOut, Video, UploadCloud, CheckCircle2, AlertTriangle, RotateCcw, Sliders, Globe, Link2, ArrowLeft, Download, ChevronDown, Check, FolderDown } from 'lucide-react';
+import { LogOut, Video, UploadCloud, CheckCircle2, AlertTriangle, RotateCcw, Sliders, Globe, Link2, ArrowLeft, Download, ChevronDown, Check, FolderDown, Play } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import LanguageSelector from '../components/LanguageSelector';
 import LivePipelineTracker from '../components/LivePipelineTracker';
@@ -330,17 +330,23 @@ function Dashboard() {
                     <div className="py-8 text-center text-slate-400 text-xs">
                       <Download className="w-8 h-8 text-slate-600 mx-auto mb-2 opacity-60" />
                       <p className="font-semibold text-slate-300">No downloads yet</p>
-                      <p className="text-slate-500 mt-1">Videos translated with your selected language will appear here for instant download.</p>
+                      <p className="text-slate-500 mt-1">Videos translated with your selected language will appear here for instant streaming and download.</p>
                     </div>
                   ) : (
                     <div className="max-h-72 overflow-y-auto space-y-2 pr-1">
                       {downloadedItems.map((item, idx) => (
                         <div
                           key={idx}
-                          className="p-3 bg-slate-800/60 hover:bg-slate-800 border border-slate-700/60 rounded-xl flex items-center justify-between gap-3 transition-colors"
+                          onClick={() => {
+                            setIsDownloadsOpen(false);
+                            navigate(`/watch?v=${item.fileName}`);
+                          }}
+                          className="p-3 bg-slate-800/60 hover:bg-slate-800 border border-slate-700/60 rounded-xl flex items-center justify-between gap-3 transition-colors cursor-pointer group/item"
                         >
                           <div className="min-w-0 flex-1">
-                            <p className="text-xs font-semibold text-slate-200 truncate">{item.title}</p>
+                            <p className="text-xs font-semibold text-slate-200 group-hover/item:text-emerald-300 transition-colors truncate">
+                              {item.title}
+                            </p>
                             <div className="flex items-center gap-2 mt-1 text-[11px] text-slate-400">
                               <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 font-mono font-bold uppercase">
                                 {item.language}
@@ -348,14 +354,27 @@ function Dashboard() {
                               <span>{item.timestamp}</span>
                             </div>
                           </div>
-                          <a
-                            href={item.downloadUrl}
-                            download
-                            className="p-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg transition-transform hover:scale-105 shrink-0"
-                            title="Download MP4"
-                          >
-                            <Download className="w-4 h-4" />
-                          </a>
+                          
+                          <div className="flex items-center gap-1.5 shrink-0" onClick={(e) => e.stopPropagation()}>
+                            <button
+                              onClick={() => {
+                                setIsDownloadsOpen(false);
+                                navigate(`/watch?v=${item.fileName}`);
+                              }}
+                              className="p-2 bg-slate-700/70 hover:bg-emerald-500 hover:text-slate-950 text-slate-200 rounded-lg transition-all"
+                              title="Watch Video"
+                            >
+                              <Play className="w-3.5 h-3.5 fill-current" />
+                            </button>
+                            <a
+                              href={item.downloadUrl}
+                              download
+                              className="p-2 bg-emerald-500 hover:bg-emerald-600 text-slate-950 rounded-lg transition-transform hover:scale-105 shrink-0"
+                              title="Download MP4"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                            </a>
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -363,6 +382,15 @@ function Dashboard() {
 
                   {downloadedItems.length > 0 && (
                     <div className="pt-3 mt-3 border-t border-slate-800 flex justify-between items-center text-xs">
+                      <button
+                        onClick={() => {
+                          setIsDownloadsOpen(false);
+                          navigate(`/watch?v=${downloadedItems[0].fileName}`);
+                        }}
+                        className="text-emerald-400 hover:text-emerald-300 font-semibold text-[11px] flex items-center gap-1"
+                      >
+                        <Play className="w-3 h-3 fill-current" /> Open in Theater Player
+                      </button>
                       <button
                         onClick={() => {
                           setDownloadedItems([]);
@@ -661,12 +689,19 @@ function Dashboard() {
 
                 {/* Action Buttons */}
                 <div className="flex flex-wrap gap-3 justify-center">
+                  <button
+                    onClick={() => navigate(`/watch?v=${generatedFileName}`)}
+                    className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-slate-950 rounded-xl font-black shadow-lg shadow-emerald-500/20 transition-all hover:scale-[1.02]"
+                  >
+                    <Play className="w-5 h-5 fill-current" />
+                    Watch in Cinema Player
+                  </button>
                   <a
                     href={downloadUrl}
                     download
-                    className="flex items-center gap-2 px-6 py-3 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl font-bold shadow-lg shadow-emerald-500/20 transition-all hover:scale-[1.02]"
+                    className="flex items-center gap-2 px-6 py-3 bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-200 rounded-xl font-bold transition-all hover:scale-[1.02]"
                   >
-                    <Video className="w-5 h-5" />
+                    <Download className="w-5 h-5" />
                     Download MP4
                   </a>
                   <button

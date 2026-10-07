@@ -6,6 +6,7 @@ import Landing from './pages/Landing';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
 import Dashboard from './pages/Dashboard';
+import WatchDownloads from './pages/WatchDownloads';
 import SubtitleEditor from './components/SubtitleEditor';
 
 // Mock Authentication Guard
@@ -89,6 +90,15 @@ function App() {
           element={
             <ProtectedRoute>
               <DirectEditorWrapper />
+            </ProtectedRoute>
+          } 
+        />
+
+        <Route 
+          path="/watch" 
+          element={
+            <ProtectedRoute>
+              <WatchDownloads />
             </ProtectedRoute>
           } 
         />
